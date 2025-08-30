@@ -28,7 +28,6 @@ app.get('/webhook', (req, res) => {
 app.post('/webhook', (req, res) => {
   const body = req.body;
 
-  console.log(JSON.stringify(body, null, 2)); // Log the incoming message
 
   // Check if this is a message from a user
   if (body.object === 'whatsapp_business_account') {
@@ -36,8 +35,9 @@ app.post('/webhook', (req, res) => {
     // e.g., get the user's message and phone number
     const userMessage = body.entry[0]?.changes[0]?.value?.messages[0]?.text?.body;
     const userPhone = body.entry[0]?.changes[0]?.value?.messages[0]?.from;
+    console.log(userMessage,userPhone)
+
   }
-  console.log(userMessage,userPhone)
 
   res.sendStatus(200); // Acknowledge receipt of the message
 });
