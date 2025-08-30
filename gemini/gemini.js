@@ -5,14 +5,16 @@ const genAI=new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 async function geminiRequest(prompt){
     try{
 
-    console.log("sending to gemini...")
+    console.log("sending to gemini...");
     const model=genAI.getGenerativeModel({model:"gemini-1.5-flash-latest"});
     const result=await model.generateContent(prompt);
-    const text= result.response.text()
-    console.log(text)
-    return result;}
+    const text= result.response.text();
+    console.log(text,"gemini response received.");
+    return text;
+}
     catch(error){
-        console.log(error)
+        console.log(error);
     }
 }
+
 module.exports={geminiRequest};

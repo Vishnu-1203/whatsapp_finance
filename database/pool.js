@@ -9,5 +9,6 @@ const pool = new Pool({
   password: process.env.DB_PASS,
   port: 5432
 });
+console.log('Database pool created.');
 
 module.exports=pool;
