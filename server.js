@@ -10,7 +10,7 @@ app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
-
+  console.log(process.env.WHATSAPP_VERIFY_TOKEN)
   // Check if a token and mode is in the query string of the request
   if (mode && token) {
     // Check the mode and token sent are correct
@@ -42,6 +42,8 @@ app.post('/webhook', (req, res) => {
   res.sendStatus(200); // Acknowledge receipt of the message
 });
 app.listen(PORT,()=>{
+    console.log(process.env.WHATSAPP_VERIFY_TOKEN)
+
     console.log(`Server is listening on port ${PORT}`)
 });
 
