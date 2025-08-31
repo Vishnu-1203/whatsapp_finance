@@ -1,14 +1,11 @@
 const {Pool}=require("pg");
-require("dotenv").config();
+// The require('dotenv').config() call should be in your main application
+// entry point (e.g., server.js or test-db.js), not here.
 
-console.log(process.env.DB_USER+"User pooled(logged)")
-const pool = new Pool({
-  user: process.env.DB_USER,
-  host: process.env.DB_HOST,
-  database: process.env.DB_NAME,
-  password: process.env.DB_PASS,
-  port: 5432
-});
+// The 'pg' library is smart! If you use the standard PG* environment variables
+// (like PGUSER, PGPASSWORD, etc.) in your .env file, you don't need to pass
+// any configuration object to the Pool constructor. It finds them automatically.
+const pool = new Pool();
 console.log('Database pool created.');
 
 module.exports=pool;
