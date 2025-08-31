@@ -1,11 +1,18 @@
 const {Pool}=require("pg");
-// The require('dotenv').config() call should be in your main application
-// entry point (e.g., server.js or test-db.js), not here.
 
-// The 'pg' library is smart! If you use the standard PG* environment variables
-// (like PGUSER, PGPASSWORD, etc.) in your .env file, you don't need to pass
-// any configuration object to the Pool constructor. It finds them automatically.
-const pool = new Pool();
+// By explicitly loading dotenv here, we ensure the correct database is always
+// used. This is the most robust way to configure the connection and will
+// fix the "relation 'users' does not exist" error.
+require('dotenv').config();
+
+const pool = new Pool({
+  user: process.env.PGUSER,
+  host: process.env.PGHOST,
+  database: process.env.PGDATABASE,
+  password: process.env.PGPASSWORD,
+  port: parseInt(process.env.PGPORT, 10) // It's best practice to parse the port to an integer
+});
+
 console.log('Database pool created.');
 
 module.exports=pool;
