@@ -12,6 +12,8 @@ app.use(express.json());
 const PORT=process.env.PORT||3000;
 const WHATSAPP_VERIFY_TOKEN=process.env.WHATSAPP_VERIFY_TOKEN;
 
+
+
 app.get("/",(req,res)=>{
   console.log("Root endpoint was hit");
   res.status(200).send("Server is up and running!");
@@ -68,38 +70,69 @@ app.post('/webhook', async (req, res) => {
             console.log(choice, "choice");
 
             switch (choice) {
-              case "CREATE":
+              case "CREATE": {
                   console.log("INTENT CREATE");
                   await dbFunctions.createTransaction(userId, initialJson);
                   await sendWhatsappText(userPhone, "Your transaction has been logged successfully!");
                   console.log("Transaction Over");
                 break;
-              case "READ":
+              }
+              case "READ": {
                 console.log("INTENT READ");
-                queryObject=await geminiRequest(generateReportQueryPrompt(userMessage,userId))
-                console.log("QUERY OBJECT:\n",queryObject);
-                extractedQueryObject= extractJson(queryObject)
-                console.log("EXTRACTED QUERY OBJECT:\n",extractedQueryObject);
-                tableContent= await dbFunctions.executeQuery(extractedQueryObject.query,extractedQueryObject.params)
-                console.log("TABLE CONTENT:\n",tableContent);
-                resportUser=await geminiRequest(generateResponseMessagePrompt(tableContent,userMessage))
-                await sendWhatsappText(userPhone,resportUser);
+                const queryObject=await geminiRequest(generateReportQueryPrompt(userMessage,userId));
+                console.log("QUERY OBJECT:\n", queryObject);
+                const extractedQueryObject= extractJson(queryObject);
+                console.log("EXTRACTED QUERY OBJECT:\n", extractedQueryObject);
+                const tableContent= await dbFunctions.executeQuery(extractedQueryObject.query,extractedQueryObject.params);
+                console.log("TABLE CONTENT:\n", tableContent);
+                const processedContent = processTableContentForReporting(tableContent, userMessage);
+                const resportUser=await geminiRequest(generateResponseMessagePrompt(processedContent,userMessage));
+                await sendWhatsappText(userPhone, resportUser);
                 console.log("Report Over");
-
-
                 break;
-              case "BOTH":
+              }
+
+              case "BOTH": {
                 console.log("INTENT BOTH");
+                // 1. CREATE the transaction first.
+                // The initial JSON from parseUserIntent has what we need.
+                await dbFunctions.createTransaction(userId, initialJson);
+                console.log("Transaction part of BOTH intent is created.");
+
+                // 2. READ the report data.
+                // We reuse the same functions as the READ case, passing the full original message.
+                // The AI is smart enough to find the question within the message.
+                const queryObject = await geminiRequest(generateReportQueryPrompt(userMessage, userId));
+                const extractedQueryObject = extractJson(queryObject);
+                console.log("EXTRACTED QUERY OBJECT FOR BOTH:\n", extractedQueryObject);
+
+                const tableContent = await dbFunctions.executeQuery(extractedQueryObject.query, extractedQueryObject.params);
+                console.log("TABLE CONTENT FOR BOTH:\n", tableContent);
+                const processedContent = processTableContentForReporting(tableContent, userMessage);
+
+                // 3. Generate a single, combined response for the user.
+                // By passing the full original message, the AI knows to acknowledge the transaction
+                // AND provide the report.
+                const finalMessage = await geminiRequest(generateResponseMessagePrompt(processedContent, userMessage));
+
+                // 4. Send the final message.
+                await sendWhatsappText(userPhone, finalMessage);
+                console.log("Both intent handled and report sent.");
                 break;
+              }
               default:
                 console.log("intent cannot be classified");
                 break;
             }
         } catch (error) {
           console.error('Error processing message:', error);
-
+          // Let the user know something went wrong.
+          try {
+            await sendWhatsappText(userPhone, "I'm sorry, I ran into an error and couldn't process your request. Please try again.");
+          } catch (sendError) {
+            console.error('Failed to send error message to user:', sendError);
           }
-
+          }
       }
     } else if (value?.statuses?.[0]) {
       // This is a status update for a message we sent
