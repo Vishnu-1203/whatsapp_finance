@@ -2,17 +2,26 @@ require("dotenv").config();
 const express=require("express");
 
 const dbFunctions=require("./database/db");
+const {parseUserIntent,generateReportQueryPrompt,extractJson}=require("./gemini/helpFunctions");
+const {geminiRequest}=require("./gemini/gemini");
+const {sendWhatsappText}=require("./whatsapp/api")
 
 const app=express();
 app.use(express.json());
 
 const PORT=process.env.PORT||3000;
 const WHATSAPP_VERIFY_TOKEN=process.env.WHATSAPP_VERIFY_TOKEN;
+
+app.get("/",(req,res)=>{
+  console.log("Root endpoint was hit");
+  res.status(200).send("Server is up and running!");
+})
+
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
-  
+
   console.log(process.env.WHATSAPP_VERIFY_TOKEN)
   // Check if a token and mode is in the query string of the request
   if (mode && token) {
@@ -31,20 +40,61 @@ app.get('/webhook', (req, res) => {
 app.post('/webhook', async (req, res) => {
   const body = req.body;
 
+  // It's helpful to stringify the body to see the full structure in logs
+  console.log("post hit");
 
   // Check if this is a message from a user
   if (body.object === 'whatsapp_business_account') {
-    try {
-      // TODO: Process the message
-      // e.g., get the user's message and phone number
-      const userMessage = body.entry[0]?.changes[0]?.value?.messages[0]?.text?.body;
-      const userPhone = body.entry[0]?.changes[0]?.value?.messages[0]?.from;
-      console.log(`Message: "${userMessage}", From: ${userPhone}`);
+    const value = body.entry?.[0]?.changes?.[0]?.value;
 
-      const userId = await dbFunctions.findOrCreateUserByPhone(userPhone);
-      console.log(`Database user ID: ${userId}`);
-    } catch (error) {
-      console.error('Error processing webhook:', error);
+    // Check if the notification is a user message
+    if (value?.messages?.[0]) {
+      const message = value.messages[0];
+      const userMessage = message.text?.body;
+      const userPhone = message.from;
+
+      // Ensure we have a message and phone number to process
+      if (userMessage && userPhone) {
+        try {
+            console.log(`Message: "${userMessage}", From: ${userPhone}`);
+
+            const userId = await dbFunctions.findOrCreateUserByPhone(userPhone);
+            console.log(`Database user ID: ${userId}`);
+
+            const initialJson = extractJson(await geminiRequest(parseUserIntent(userMessage)));
+            console.log(initialJson, "initial json");
+
+            const choice = initialJson.intent;
+            console.log(choice, "choice");
+
+            switch (choice) {
+              case "CREATE":
+                  console.log("Intent CREATE");
+                  await dbFunctions.createTransaction(userId, initialJson);
+                  await sendWhatsappText(userPhone, "Your transaction has been logged successfully!");
+                  console.log("Transaction Over");
+                break;
+              case "READ":
+                console.log("INTENT READ");
+                break;
+              case "BOTH":
+                console.log("INTENT BOTH");
+                break;
+              default:
+                console.log("intent cannot be classified");
+                break;
+            }
+        } catch (error) {
+          console.error('Error processing message:', error);
+          }
+      }
+    } else if (value?.statuses?.[0]) {
+      // This is a status update for a message we sent
+      const status = value.statuses[0];
+      console.log(`Status update: Message to ${status.recipient_id} is now ${status.status}`);
+    } else {
+      // A different kind of notification we aren't handling
+      console.log("Received a webhook notification that was not a message or status update.");
     }
   }
 

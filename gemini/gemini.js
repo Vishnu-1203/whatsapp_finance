@@ -1,5 +1,4 @@
 const {GoogleGenerativeAI}=require('@google/generative-ai');
-require("dotenv").config();
 const genAI=new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const {parseUserIntent} =require("./helpFunctions")
 
@@ -17,5 +16,4 @@ async function geminiRequest(prompt){
         console.log(error);
     }
 }
-geminiRequest(parseUserIntent("i bought a milkshake for 20 rs"))
 module.exports={geminiRequest};

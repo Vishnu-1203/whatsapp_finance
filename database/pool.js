@@ -3,7 +3,6 @@ const {Pool}=require("pg");
 // By explicitly loading dotenv here, we ensure the correct database is always
 // used. This is the most robust way to configure the connection and will
 // fix the "relation 'users' does not exist" error.
-require('dotenv').config();
 
 const pool = new Pool({
   user: process.env.PGUSER,
