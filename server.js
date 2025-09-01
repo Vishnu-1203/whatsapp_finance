@@ -2,7 +2,7 @@ require("dotenv").config();
 const express=require("express");
 
 const dbFunctions=require("./database/db");
-const {parseUserIntent,generateReportQueryPrompt,extractJson}=require("./gemini/helpFunctions");
+const {parseUserIntent,generateReportQueryPrompt,extractJson,extractSqlQuery,generateResponseMessagePrompt}=require("./gemini/helpFunctions");
 const {geminiRequest}=require("./gemini/gemini");
 const {sendWhatsappText}=require("./whatsapp/api")
 
@@ -69,13 +69,24 @@ app.post('/webhook', async (req, res) => {
 
             switch (choice) {
               case "CREATE":
-                  console.log("Intent CREATE");
+                  console.log("INTENT CREATE");
                   await dbFunctions.createTransaction(userId, initialJson);
                   await sendWhatsappText(userPhone, "Your transaction has been logged successfully!");
                   console.log("Transaction Over");
                 break;
               case "READ":
                 console.log("INTENT READ");
+                queryObject=await geminiRequest(generateReportQueryPrompt(userMessage,userId))
+                console.log("QUERY OBJECT:\n",queryObject);
+                extractedQueryObject= extractJson(queryObject)
+                console.log("EXTRACTED QUERY OBJECT:\n",extractedQueryObject);
+                tableContent= await dbFunctions.executeQuery(extractedQueryObject.query,extractedQueryObject.params)
+                console.log("TABLE CONTENT:\n",tableContent);
+                resportUser=await geminiRequest(generateResponseMessagePrompt(tableContent,userMessage))
+                await sendWhatsappText(userPhone,resportUser);
+                console.log("Report Over");
+
+
                 break;
               case "BOTH":
                 console.log("INTENT BOTH");
@@ -86,7 +97,9 @@ app.post('/webhook', async (req, res) => {
             }
         } catch (error) {
           console.error('Error processing message:', error);
+
           }
+
       }
     } else if (value?.statuses?.[0]) {
       // This is a status update for a message we sent

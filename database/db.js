@@ -91,4 +91,25 @@ module.exports = {
       client.release();
     }
   },
+
+  /**
+   * Executes a given SQL query and returns the results.
+   * This is primarily intended for SELECT queries.
+   * @param {string} sqlQuery The SQL query string to execute.
+   * @param {Array<any>} [params=[]] The parameters for the SQL query.
+   * @returns {Promise<Array<Object>>} The rows returned from the query.
+   */
+  executeQuery: async (sqlQuery, params = []) => {
+    // This is a more concise and safer way to query, letting the pool
+    // handle client checkout and release automatically. It's the recommended
+    // approach for single queries.
+    try {
+      const result = await pool.query(sqlQuery, params);
+      console.log(`Executed query and found ${result.rows.length} rows.`);
+      return result.rows; // Return the array of rows
+    } catch (e) {
+      console.error('Error executing query', e);
+      throw e; // Re-throw the error for the caller to handle
+    }
+  },
 };

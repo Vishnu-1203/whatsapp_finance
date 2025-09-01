@@ -69,10 +69,15 @@ Example 4 Output Format:
  * @returns {string} The complete prompt to be sent to the Gemini API.
  */
 function generateReportQueryPrompt(userMessage, userId) {
-  return `You are a PostgreSQL expert who writes read-only SQL queries. Given the database schema and a user's question, generate a single, valid SQL SELECT query to answer it.
-Your output MUST be only the SQL query and nothing else. Do not add any explanatory text or markdown.
+  return `You are a PostgreSQL expert who writes read-only, parameterized SQL queries. Given the database schema and a user's question, you must generate a JSON object containing a SQL SELECT query and its corresponding parameters array.
 
-The user's ID is: ${userId}
+Your output MUST be a valid JSON object and nothing else. Do not add any explanatory text or markdown.
+
+The JSON object must have two keys:
+1. "query": A string containing the SQL query with placeholders (e.g., $1, $2).
+2. "params": An array containing the values for these placeholders in the correct order.
+
+Crucially, the query MUST include a "WHERE user_id = $1" clause, and the first element in the 'params' array MUST be the user's ID.
 
 Database Schema:
 CREATE TABLE transactions (
@@ -83,21 +88,124 @@ CREATE TABLE transactions (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+---
+Example 1 User Question: "how much did i spend this month"
+Example 1 Output:
+{
+  "query": "SELECT SUM(total_amount) as total FROM transactions WHERE user_id = $1 AND type = $2 AND created_at >= date_trunc('month', current_date);",
+  "params": ["${userId}", "expense"]
+}
+---
+Example 2 User Question: "what were my last 5 income transactions"
+Example 2 Output:
+{
+  "query": "SELECT total_amount, created_at FROM transactions WHERE user_id = $1 AND type = $2 ORDER BY created_at DESC LIMIT 5;",
+  "params": ["${userId}", "income"]
+}
+---
 User Question: "${userMessage}"`;
 }
-function extractJson(text) {
-  const firstBrace = text.indexOf('{');
-  const lastBrace = text.lastIndexOf('}');
 
-  if (firstBrace === -1 || lastBrace === -1) {
-    throw new Error("Could not find a valid JSON object in the response.");
+/**
+ * Generates a prompt for Gemini to convert structured query results into a natural language response.
+ * @param {Array<Object>} queryResult The data returned from the database query.
+ * @param {string} userMessage The original message/question from the user.
+ * @returns {string} The complete prompt to be sent to the Gemini API.
+ */
+function generateResponseMessagePrompt(queryResult, userMessage) {
+  const resultString = JSON.stringify(queryResult, null, 2);
+
+  return `You are a helpful financial assistant. You will be given a user's original question and the data retrieved from a database to answer that question. Your task is to formulate a clear, friendly, and natural language response for the user.
+
+Your output MUST be only the text response to be sent to the user, and nothing else. Do not add any explanatory text or markdown. Be concise and directly answer the question.
+
+---
+User's Original Question: "${userMessage}"
+---
+Data from Database (in JSON format):
+${resultString}
+---
+
+Here are some examples of how to respond:
+
+---
+Example 1 User Question: "how much did i spend this month"
+Example 1 Data: [{ "total": "1550.75" }]
+Example 1 Your Response: You've spent a total of ₹1550.75 this month.
+---
+Example 2 User Question: "what were my last 2 expenses"
+Example 2 Data: [{ "total_amount": "250.00", "created_at": "2024-09-01T10:00:00.000Z" }, { "total_amount": "75.00", "created_at": "2024-08-30T15:30:00.000Z" }]
+Example 2 Your Response: Here are your last 2 expenses:\n- ₹250.00 on September 1\n- ₹75.00 on August 30
+---
+Example 3 User Question: "did i buy any coffee this week"
+Example 3 Data: []
+Example 3 Your Response: I couldn't find any records of you buying coffee this week.
+---
+
+Now, based on the user's question and the data provided above, generate the response. Your Response:`;
+}
+
+function extractJson(text) {
+  // Look for JSON inside ```json ... ``` or just ``` ... ```
+  const jsonRegex = /```(?:json)?\s*([\s\S]*?)\s*```/;
+  const match = text.match(jsonRegex);
+
+  let jsonString;
+
+  if (match && match[1]) {
+    // If a markdown block is found, use its content
+    jsonString = match[1].trim();
+  } else {
+    // Otherwise, fall back to the original method of finding the first and last brace
+    const firstBrace = text.indexOf('{');
+    const lastBrace = text.lastIndexOf('}');
+
+    if (firstBrace === -1 || lastBrace === -1) {
+      console.error("Could not find JSON in the following text:", text);
+      throw new Error("Could not find a valid JSON object in the response.");
+    }
+    jsonString = text.substring(firstBrace, lastBrace + 1);
   }
 
-  const jsonString = text.substring(firstBrace, lastBrace + 1);
-  return JSON.parse(jsonString);
+  try {
+    return JSON.parse(jsonString);
+  } catch (e) {
+    console.error("Failed to parse the following string as JSON:", jsonString);
+    throw e; // Re-throw the original error
+  }
 }
-module.exports = {extractJson,
-  parseUserIntent,
-  generateReportQueryPrompt,
-};
 
+/**
+ * Extracts a SQL query from a text response, handling potential markdown code blocks.
+ * It also performs a basic validation to ensure the query is a SELECT statement.
+ * @param {string} text The raw text response from the Gemini API.
+ * @returns {string} The cleaned SQL query.
+ * @throws {Error} If a valid SELECT query cannot be found.
+ */
+function extractSqlQuery(text) {
+  // Regular expression to find content within ```sql ... ``` or just ``` ... ```
+  const sqlRegex = /```(?:sql)?\s*([\s\S]*?)\s*```/;
+  const match = text.match(sqlRegex);
+
+  let query;
+  if (match && match[1]) {
+    // If a markdown block is found, use its content
+    query = match[1].trim();
+  } else {
+    // Otherwise, assume the whole text is the query and trim any surrounding whitespace/newlines
+    query = text.trim();
+  }
+
+  // Basic validation: check if it's a SELECT query.
+  if (!query.toLowerCase().startsWith('select')) {
+    throw new Error("The extracted text does not appear to be a valid SELECT SQL query.");
+  }
+
+  return query;
+}
+
+
+module.exports = {extractJson, extractSqlQuery,
+  parseUserIntent,
+  generateReportQueryPrompt,generateResponseMessagePrompt
+};
