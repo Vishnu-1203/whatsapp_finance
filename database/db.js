@@ -12,7 +12,6 @@ module.exports = {
    * @returns {Promise<number>} The user's ID.
    */
   findOrCreateUserByPhone: async (phoneNumber) => {
-        console.log("pass",process.env.PGPASSWORD)
 
     const client = await pool.connect();
     try {

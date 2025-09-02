@@ -80,9 +80,7 @@ app.post('/webhook', async (req, res) => {
               case "READ": {
                 console.log("INTENT READ");
                 const queryObject=await geminiRequest(generateReportQueryPrompt(userMessage,userId));
-                console.log("QUERY OBJECT:\n", queryObject);
                 const extractedQueryObject= extractJson(queryObject);
-                console.log("EXTRACTED QUERY OBJECT:\n", extractedQueryObject);
                 const tableContent= await dbFunctions.executeQuery(extractedQueryObject.query,extractedQueryObject.params);
                 console.log("TABLE CONTENT:\n", tableContent);
                 const processedContent = processTableContentForReporting(tableContent, userMessage);
@@ -104,7 +102,6 @@ app.post('/webhook', async (req, res) => {
                 // The AI is smart enough to find the question within the message.
                 const queryObject = await geminiRequest(generateReportQueryPrompt(userMessage, userId));
                 const extractedQueryObject = extractJson(queryObject);
-                console.log("EXTRACTED QUERY OBJECT FOR BOTH:\n", extractedQueryObject);
 
                 const tableContent = await dbFunctions.executeQuery(extractedQueryObject.query, extractedQueryObject.params);
                 console.log("TABLE CONTENT FOR BOTH:\n", tableContent);
