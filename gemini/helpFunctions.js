@@ -5,17 +5,18 @@
  * @returns {string} The complete prompt to be sent to the Gemini API.
  */
 function parseUserIntent(userMessage) {
-  return `You are an expert intent classifier and data extraction API. Your job is to analyze a user's message and determine their intent, which can be 'CREATE', 'READ', or 'BOTH'. You must also extract transaction data if the intent involves creating a record.
+  return `You are an expert intent classifier and data extraction API. Your job is to analyze a user's message and determine their intent, which can be 'CREATE', 'READ', 'BOTH', or 'OTHER'. You must also extract transaction data if the intent involves creating a record.
 
 Your output MUST be a valid JSON object and nothing else. Do not add any explanatory text or any symbols or words like json or any markdown or such, the output should be pure JSON.
 
 The user's message is: "${userMessage}"
 
 - If the user wants to log, add, or record new information (like an expense or income), the intent is 'CREATE'.
-- If the user is asking a question or requesting a summary/report, the intent is 'READ'.
+- If the user is asking a question or requesting a summary/report about their finances, the intent is 'READ'.
 - If the user is doing both of the above in the same message, the intent is 'BOTH'.
+- If the message is a greeting, a general non-financial question, or anything that doesn't fit the above categories, the intent is 'OTHER'.
 
-If the intent is 'CREATE' or 'BOTH', you MUST also extract the transaction details into a 'transaction' object.
+If the intent is 'CREATE' or 'BOTH', you MUST also extract the transaction details into a 'transaction' object. If the intent is 'READ' or 'OTHER', there will be no 'transaction' object.
 
 ---
 Example 1 Input Message: "i bought 2 milkshakes for 20rs and 1 coffee for 15"
@@ -59,6 +60,18 @@ Example 4 Output Format:
       { "item_name": "pizza", "quantity": 1, "price_per_item": 250 }
     ]
   }
+}
+---
+Example 5 Input Message: "hey how are you doing"
+Example 5 Output Format:
+{
+  "intent": "OTHER"
+}
+---
+Example 6 Input Message: "what is your name?"
+Example 6 Output Format:
+{
+  "intent": "OTHER"
 }`;
 }
 
@@ -145,6 +158,35 @@ Example 3 Your Response: I couldn't find any records of you buying coffee this w
 Now, based on the user's question and the data provided above, generate the response. Your Response:`;
 }
 
+/**
+ * Generates a prompt for Gemini to create a friendly introductory message for new or confused users.
+ * @param {string} userMessage The original message from the user, which triggered this introductory response.
+ * @returns {string} The complete prompt to be sent to the Gemini API.
+ */
+function generateIntroductoryMessagePrompt(userMessage) {
+  return `You are a friendly financial assistant chatbot for WhatsApp. A user has sent a message that isn't a command to log a transaction or ask a financial question. Your task is to introduce yourself and briefly explain what you can do, while acknowledging their original message.
+
+The user's original message was: "${userMessage}"
+
+Your output MUST be only the text response to be sent to the user, and nothing else. Do not add any explanatory text or markdown.
+
+Keep the tone friendly, helpful, and concise.
+
+Here are the key points to include:
+- Greet the user.
+- State that you are a financial assistant.
+- Mention that you can help track expenses and income.
+- Give a simple example of how to log an expense (e.g., "I bought coffee for 20").
+- Give a simple example of how to ask a question (e.g., "How much did I spend this week?").
+
+Example Response (if user sent "hey"):
+Hello there! I'm your personal finance assistant on WhatsApp. I can help you track your daily expenses and income.
+
+You can tell me things like "I spent 50 on snacks" or ask me "What were my total expenses last month?".
+
+How can I help you today?`;
+}
+
 function extractJson(text) {
   // Look for JSON inside ```json ... ``` or just ``` ... ```
   const jsonRegex = /```(?:json)?\s*([\s\S]*?)\s*```/;
@@ -207,5 +249,7 @@ function extractSqlQuery(text) {
 
 module.exports = {extractJson, extractSqlQuery,
   parseUserIntent,
-  generateReportQueryPrompt,generateResponseMessagePrompt
+  generateReportQueryPrompt,
+  generateResponseMessagePrompt,
+  generateIntroductoryMessagePrompt
 };

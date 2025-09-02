@@ -2,16 +2,16 @@ require("dotenv").config();
 const express=require("express");
 
 const dbFunctions=require("./database/db");
-const {parseUserIntent,generateReportQueryPrompt,extractJson,extractSqlQuery,generateResponseMessagePrompt}=require("./gemini/helpFunctions");
+const {parseUserIntent,generateReportQueryPrompt,extractJson,generateResponseMessagePrompt,generateIntroductoryMessagePrompt}=require("./gemini/helpFunctions");
 const {geminiRequest}=require("./gemini/gemini");
 const {sendWhatsappText}=require("./whatsapp/api")
+const {processTableContentForReporting}=require("./calcFunctions")
 
 const app=express();
 app.use(express.json());
 
 const PORT=process.env.PORT||3000;
 const WHATSAPP_VERIFY_TOKEN=process.env.WHATSAPP_VERIFY_TOKEN;
-
 
 
 app.get("/",(req,res)=>{
@@ -120,10 +120,20 @@ app.post('/webhook', async (req, res) => {
                 console.log("Both intent handled and report sent.");
                 break;
               }
+              case "OTHER":{
+                console.log("INTENT OTHER");
+                const response=await geminiRequest(generateIntroductoryMessagePrompt(userMessage));
+                await sendWhatsappText(userPhone, response)
+
+                break;
+                }
+
               default:
                 console.log("intent cannot be classified");
                 break;
             }
+              
+        
         } catch (error) {
           console.error('Error processing message:', error);
           // Let the user know something went wrong.
