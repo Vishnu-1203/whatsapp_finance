@@ -82,7 +82,7 @@ Example 6 Output Format:
  * @returns {string} The complete prompt to be sent to the Gemini API.
  */
 function generateReportQueryPrompt(userMessage, userId) {
-  return `You are a PostgreSQL expert who writes read-only, parameterized SQL queries. Given the database schema and a user's question, you must generate a JSON object containing a SQL SELECT query and its corresponding parameters array.
+  return `You are a PostgreSQL expert who writes read-only, parameterized SQL queries. Your primary goal is to provide rich, detailed data for reporting. Given the database schema and a user's question, you must generate a JSON object containing a SQL SELECT query and its corresponding parameters array.
 
 Your output MUST be a valid JSON object and nothing else. Do not add any explanatory text or markdown.
 
@@ -90,30 +90,58 @@ The JSON object must have two keys:
 1. "query": A string containing the SQL query with placeholders (e.g., $1, $2).
 2. "params": An array containing the values for these placeholders in the correct order.
 
-Crucially, the query MUST include a "WHERE user_id = $1" clause, and the first element in the 'params' array MUST be the user's ID.
+Core Requirements:
+- The query MUST be filtered by the user's ID using "WHERE t.user_id = $1". The first element in the 'params' array MUST be the user's ID: ${userId}.
+- To provide rich context, your query should almost always return detailed transaction data by JOINing \`transactions\` (aliased as \`t\`) with \`transaction_items\` (aliased as \`ti\`).
+- **CRITICAL: To prevent incorrect totals from table joins, you MUST calculate the total sum using a subquery in the SELECT statement.** This subquery should select the sum from the \`transactions\` table and use the same filters as the main query.
+- For queries filtering by item details (e.g., "spending on food"), the subquery for the total sum must also correctly filter the transactions before summing. Use an \`IN (SELECT transaction_id FROM ...)\` clause for this.
+- For queries involving a LIMIT (e.g., "last 5 transactions"), it is better to use a Common Table Expression (CTE) to first select the limited transactions and then calculate the sum based on that CTE.
 
 Database Schema:
+
 CREATE TABLE transactions (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL,
     total_amount NUMERIC(12, 2) NOT NULL,
     type VARCHAR(10) NOT NULL, -- 'income' or 'expense'
+    description TEXT, -- Optional overall description for the transaction
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE transaction_items (
+    id SERIAL PRIMARY KEY,
+    transaction_id INTEGER NOT NULL,
+    item_name TEXT NOT NULL,
+    quantity NUMERIC(10, 2) NOT NULL DEFAULT 1,
+    price_per_item NUMERIC(10, 2) NOT NULL,
+    -- total_price is auto-calculated as quantity * price_per_item
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_transaction
+        FOREIGN KEY(transaction_id)
+        REFERENCES transactions(id)
+        ON DELETE CASCADE
 );
 
 ---
 Example 1 User Question: "how much did i spend this month"
 Example 1 Output:
 {
-  "query": "SELECT SUM(total_amount) as total FROM transactions WHERE user_id = $1 AND type = $2 AND created_at >= date_trunc('month', current_date);",
-  "params": ["${userId}", "expense"]
+  "query": "SELECT t.total_amount, t.created_at, ti.item_name, ti.quantity, ti.price_per_item, (SELECT SUM(total_amount) FROM transactions WHERE user_id = $1 AND type = $2 AND created_at >= date_trunc('month', current_date)) as total_sum FROM transactions t JOIN transaction_items ti ON t.id = ti.transaction_id WHERE t.user_id = $1 AND type = $2 AND created_at >= date_trunc('month', current_date) ORDER BY t.created_at DESC;",
+  "params": [${userId}, "expense"]
 }
 ---
 Example 2 User Question: "what were my last 5 income transactions"
 Example 2 Output:
 {
-  "query": "SELECT total_amount, created_at FROM transactions WHERE user_id = $1 AND type = $2 ORDER BY created_at DESC LIMIT 5;",
-  "params": ["${userId}", "income"]
+  "query": "WITH LimitedTransactions AS (SELECT id, total_amount, created_at FROM transactions WHERE user_id = $1 AND type = $2 ORDER BY created_at DESC LIMIT 5) SELECT lt.total_amount, lt.created_at, ti.item_name, ti.quantity, ti.price_per_item, (SELECT SUM(total_amount) FROM LimitedTransactions) as total_sum FROM LimitedTransactions lt JOIN transaction_items ti ON lt.id = ti.transaction_id ORDER BY lt.created_at DESC;",
+  "params": [${userId}, "income"]
+}
+---
+Example 3 User Question: "show my spending on food"
+Example 3 Output:
+{
+  "query": "SELECT t.total_amount, t.created_at, ti.item_name, ti.quantity, ti.price_per_item, (SELECT SUM(t_inner.total_amount) FROM transactions t_inner WHERE t_inner.user_id = $1 AND t_inner.type = $2 AND t_inner.id IN (SELECT transaction_id FROM transaction_items WHERE item_name ILIKE $3)) as total_sum FROM transactions t JOIN transaction_items ti ON t.id = ti.transaction_id WHERE t.user_id = $1 AND t.type = $2 AND ti.item_name ILIKE $3 ORDER BY t.created_at DESC;",
+  "params": [${userId}, "expense", "%food%"]
 }
 ---
 User Question: "${userMessage}"`;
@@ -128,7 +156,7 @@ User Question: "${userMessage}"`;
 function generateResponseMessagePrompt(queryResult, userMessage) {
   const resultString = JSON.stringify(queryResult, null, 2);
 
-  return `You are a helpful financial assistant. You will be given a user's original question and the data retrieved from a database to answer that question. Your task is to formulate a clear, friendly, and natural language response for the user.
+  return `You are a helpful financial assistant. You will be given a user's original question and the data retrieved from a database. Your task is to formulate a clear, friendly, and natural language response.
 
 Your output MUST be only the text response to be sent to the user, and nothing else. Do not add any explanatory text or markdown. Be concise and directly answer the question.
 
@@ -139,16 +167,55 @@ Data from Database (in JSON format):
 ${resultString}
 ---
 
-Here are some examples of how to respond:
+**CRITICAL INSTRUCTIONS FOR INTERPRETING THE DATA:**
+
+1.  **The Final Total is Already Calculated:** The \`total_sum\` field contains the final, correct total for the user's entire question. You MUST use this value for any summary total. It is the same in every row.
+
+2.  **DO NOT SUM THE \`total_amount\` COLUMN:** The \`total_amount\` field is for a single transaction and is repeated for each item in that transaction. Summing this column yourself will result in a wildly incorrect, inflated number.
+
+3.  **How to Answer:**
+    *   If the user asks for a simple total (e.g., "how much did I spend?"), your primary job is to take the value from \`total_sum\` and present it.
+    *   If the user asks for a list or a breakdown, you can show the individual items using \`item_name\` and \`price_per_item\`. Then, present the final total using the single \`total_sum\` value.
 
 ---
-Example 1 User Question: "how much did i spend this month"
-Example 1 Data: [{ "total": "1550.75" }]
-Example 1 Your Response: You've spent a total of ₹1550.75 this month.
+Example 1 User Question: "What are my total expenses today?"
+Example 1 Data:
+[
+  {
+    "total_amount": "350.00",
+    "item_name": "lunch",
+    "total_sum": "15150.00"  // <-- USE THIS
+  },
+  {
+    "total_amount": "14800.00",
+    "item_name": "mouse",
+    "total_sum": "15150.00"  // <-- USE THIS
+  },
+  {
+    "total_amount": "14800.00",
+    "item_name": "keyboard",
+    "total_sum": "15150.00"  // <-- USE THIS
+  }
+]
+Example 1 Your Response: Your total expenses today are ₹15,150.00.
 ---
-Example 2 User Question: "what were my last 2 expenses"
-Example 2 Data: [{ "total_amount": "250.00", "created_at": "2024-09-01T10:00:00.000Z" }, { "total_amount": "75.00", "created_at": "2024-08-30T15:30:00.000Z" }]
-Example 2 Your Response: Here are your last 2 expenses:\n- ₹250.00 on September 1\n- ₹75.00 on August 30
+Example 2 User Question: "list my expenses from yesterday"
+Example 2 Data:
+[
+  {
+    "total_amount": "350.00",
+    "item_name": "lunch",
+    "price_per_item": "350.00",
+    "total_sum": "425.00"
+  },
+  {
+    "total_amount": "75.00",
+    "item_name": "coffee",
+    "price_per_item": "75.00",
+    "total_sum": "425.00"
+  }
+]
+Example 2 Your Response: Yesterday, you spent a total of ₹425.00. Here's the breakdown:\n- lunch: ₹350.00\n- coffee: ₹75.00
 ---
 Example 3 User Question: "did i buy any coffee this week"
 Example 3 Data: []
@@ -164,27 +231,46 @@ Now, based on the user's question and the data provided above, generate the resp
  * @returns {string} The complete prompt to be sent to the Gemini API.
  */
 function generateIntroductoryMessagePrompt(userMessage) {
-  return `You are a friendly financial assistant chatbot for WhatsApp. A user has sent a message that isn't a command to log a transaction or ask a financial question. Your task is to introduce yourself and briefly explain what you can do, while acknowledging their original message.
+  return `You are "Finance Bot", a friendly and helpful financial assistant on WhatsApp. A user has sent a message that isn't a direct command to log a transaction or ask for a financial report. Your task is to respond appropriately while gently guiding the user back to your core features.
 
 The user's original message was: "${userMessage}"
 
 Your output MUST be only the text response to be sent to the user, and nothing else. Do not add any explanatory text or markdown.
 
-Keep the tone friendly, helpful, and concise.
+Follow these steps for your response:
+1.  Acknowledge the user's message. If it's a question, provide a brief, helpful answer. If it's a greeting, respond warmly.
+2.  After your initial answer/greeting, smoothly transition into your main purpose.
+3.  Introduce yourself as "Finance Bot" and explain that you help track income and expenses.
+4.  Give a simple example of how to log an expense (e.g., "I bought coffee for 20").
+5.  Give a simple example of how to ask a question (e.g., "How much did I spend this week?").
+6.  Keep the overall tone friendly, helpful, and concise.
 
-Here are the key points to include:
-- Greet the user.
-- State that you are a financial assistant.
-- Mention that you can help track expenses and income.
-- Give a simple example of how to log an expense (e.g., "I bought coffee for 20").
-- Give a simple example of how to ask a question (e.g., "How much did I spend this week?").
-
-Example Response (if user sent "hey"):
+---
+Example 1 (Greeting)
+User Message: "hey"
+Your Response:
 Hello there! I'm your personal finance assistant on WhatsApp. I can help you track your daily expenses and income.
 
 You can tell me things like "I spent 50 on snacks" or ask me "What were my total expenses last month?".
 
-How can I help you today?`;
+How can I help you today?
+---
+Example 2 (General Question)
+User Message: "what is your name?"
+Your Response:
+You can call me Finance Bot! I'm here to help you manage your finances.
+
+To get started, you can log an expense like "I bought a book for 150" or ask for a summary like "What did I spend on this week?".
+---
+Example 3 (Finance-related Question)
+User Message: "what is inflation?"
+Your Response:
+Inflation is the rate at which the general level of prices for goods and services is rising, and subsequently, purchasing power is falling.
+
+Tracking your expenses is a great first step to managing your money during inflationary periods! As Finance Bot, I can help you with that. Just tell me things like "spent 100 on fuel" and I'll keep a record for you.
+---
+
+Now, generate a response based on the user's message: "${userMessage}"`;
 }
 
 function extractJson(text) {
